@@ -1,0 +1,159 @@
+ // SPDX-License-Identifier: GPL-3.0
+
+ pragma solidity >=0.5.0 <=0.9.0;
+
+/*
+1. Admin will start a campaign for CrowdFunding with a specific monetary goal and deadline
+2. Contributors will contribute to that project by sending ETH.
+3. Once the spending request was created, the contributors can start voting for that specific Spending Request.
+4. If more than 50% of the total contributors voted for that request, then the admin would have the permission to spend the amount specified
+in the spending request.
+5. The power is moved from the campaign's admin to those that donated money.
+6. Contributors can request a refund if the monetary goal was not reached with the deadline.
+
+*/
+
+contract CrowdFunding {
+    mapping (address => uint) public contributors;
+    address public admin;
+    uint public noOfContributors;
+    uint public minimumContribution;
+    uint public deadline; // timestamp
+    uint public goal;
+    uint public raisedAmount;
+
+    struct Request {
+        string description;
+        address payable recipient;
+        uint value;
+        bool completed;
+        uint noOfVoters;
+        mapping (address => bool) voters;
+    }
+
+    mapping (uint => Request) public requests;   // You cannot store the requests inside a dynamic array!
+
+    uint public numRequests;
+
+    constructor(uint _goal, uint _deadline) {
+        goal = _goal;
+        deadline = block.timestamp + _deadline;
+        minimumContribution = 100 wei;
+        admin = msg.sender;
+
+    }
+
+    function currentTime() public view returns (uint) {
+        return block.timestamp;
+    }
+
+    event ContributeEvent(address _sender, uint _value);
+    event CreateRequestEvent(string _description, address _recipient, uint _value);
+    event MakePaymentEvent(address _recipient, uint _value);
+
+
+    function contribute() public payable {
+        require(minimumContribution <= msg.value , "Minimum Contribution not met!");
+        require(block.timestamp < deadline, "Deadline has passed!");
+        require(raisedAmount < goal, "Goal is met!");
+
+        if(contributors[msg.sender] == 0) {
+            noOfContributors++;
+        }
+
+        contributors[msg.sender] += msg.value;      // If the person has not invested yet, contributors[msg.sender] gives 0 !!!
+        raisedAmount += msg.value;
+
+        emit ContributeEvent(msg.sender, msg.value);
+
+    }
+
+    receive() payable external {
+        contribute();
+    }
+
+    function getBalance() public view returns(uint) {
+        return address(this).balance;
+    }
+
+    function getRefund() public {                                       // If we need to use msg.value !!
+        require(block.timestamp >= deadline && raisedAmount < goal);
+        require(contributors[msg.sender] > 0);
+        
+
+        address payable recipient = payable(msg.sender);
+
+        contributors[msg.sender] = 0;
+
+        recipient.transfer(contributors[msg.sender]);
+
+
+    }
+
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "Only admin can call this function! ");
+        _;
+    }
+
+    function createRequest(string memory _description, address payable _recipient, uint _value) public onlyAdmin {
+
+        Request storage newRequest = requests[numRequests];  // Struct includes nested mapping and must be included with storage
+        numRequests++;
+
+        newRequest.description = _description;
+        newRequest.recipient = _recipient;
+        newRequest.value = _value;
+        newRequest.completed = false;
+        newRequest.noOfVoters = 0;
+
+        emit CreateRequestEvent(_description, _recipient, _value);
+
+        
+    }
+
+    function voteRequest (uint _requestNo) public {
+        require(contributors[msg.sender] > 0, "You must be a contributor to vote! ");
+        Request storage thisRequest = requests[_requestNo];
+
+        require(thisRequest.voters[msg.sender] == false, "You have already voted! ");
+        thisRequest.voters[msg.sender] = true;
+        thisRequest.noOfVoters++;
+
+    }
+
+    function makePayment(uint _requestNo) public onlyAdmin {
+        require(raisedAmount >= goal);
+        
+        Request storage thisRequest = requests[_requestNo];
+
+        require(msg.sender == thisRequest.recipient);
+        require(thisRequest.completed == false , "The request has been completed !");
+
+        require(thisRequest.noOfVoters > noOfContributors / 2); // 50% voted for this request
+
+        thisRequest.recipient.transfer(thisRequest.value);
+
+        thisRequest.completed = true;
+
+        emit MakePaymentEvent(thisRequest.recipient, thisRequest.value);
+
+
+    }
+
+    /* Solidity Events -> 1 - Each ETH transaction has attached to it a receipt which contains zero or more log entries. They are called events in 
+    Solidity and Web3, and logs in EVM and Yellow Pages.
+    2 - Events allow js callback functions that listen for them in the user interface to update the interface accordingly.
+    3 - Generated events are not accessible from within contracts, not even from the one which has created and emitted them. They can only be 
+    accessed by external actors such as JS.
+    4 - Events are inheritable members of contracts so if you declare an event in an interface or a base contract you do not need to declare it 
+    in the derived contracts. You just emit it.
+    5 - An event is declared using the event keyword and by convention its name starts with an uppercase letter.
+    // declare an Event
+    event Transfer(address _to, uint _value);
+
+    6 - Events are emitted inside setter functions using emit followed by the name of the event
+    // emit an Event
+    emit Transfer(_to, msg.value);
+
+    */
+}
